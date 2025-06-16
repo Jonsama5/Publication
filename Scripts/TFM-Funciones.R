@@ -202,7 +202,7 @@ plot_richness_by_variables <- function(physeq) {
       theme_bw() +
       theme(panel.grid = element_line(color = "grey", size = 0.5), 
             plot.title = element_text(hjust = 0.5, size = 16, color = "black"),
-            axis.text.x = element_text(angle = 90))
+            axis.text.x = element_text(angle = 90)) +
     ylab(label = "Índice alfa diversidad")
   }
   
