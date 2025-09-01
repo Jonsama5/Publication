@@ -1,4 +1,4 @@
-# =========================================================
+ =========================================================
 # FUNCIONES PARA EL ANÁLISIS DE LA MICROBIOTA CON PHYLOSEQ
 # =========================================================
 
@@ -110,7 +110,7 @@ plot_bar_by_vars <- function(physeq, paleta = NULL) {
 }
   #USO: Obtener una lista de gráficos composicionales de un objeto phyloseq en
       #función de las variables para su visualización con plotwatcher()
-paleta <-  c("#FFFFFF", "#000000", "#FF0000", "#00FF00", "#0000FF", "#", "#FF00FF", "#00FFFF", "#800000", "#008000",
+paleta <-  c("#FFFFFF", "#000000", "#FF0000", "#00FF00", "#0000FF", "#FF00FF", "#00FFFF", "#800000", "#008000",
              "#000080", "#800080", "#008080", "#C0C0C0", "#808080", "#FFA500", "#FFFF99", "#FFD700", "#FF69B4",
              "#87CEEB", "#FF6347", "#FF7F50", "#20B2AA", "#ADFF2F", "#7FFFD4", "#40E0D0", "#FF4500", "#DA70D6", "#FFDAB9",
              "#DB7093", "#FFDEAD", "#00FA9A", "#B0E0E6", "#FFC0CB", "#E6E6FA", "#00FF7F", "#4682B4", "#F08080", "#DAA520",
@@ -128,7 +128,7 @@ paleta <-  c("#FFFFFF", "#000000", "#FF0000", "#00FF00", "#0000FF", "#", "#FF00F
 
 paleta_genus <- c("#000000", "#A52A2A", "#FF69B4", "#6A5ACD", "#1E90FF", "#7B68EE", "#808080", "#FFD700", "#556B2F", 
                   "#00FA9A", "#FF8C00", "#DA70D6", "#F8F8FF", "#000080", "#DC143C", "#9932CC", "#2F4F4F", "#FF1493", 
-                  "#B0C4DE", "#FFDAB9", "#ADFF2F")
+                  "#B0C4DE", "#FFDAB9", "#008000", "#778795")
 
 #Visualizador general de gráficos
 plotwatcher <- function(plotlist) {
@@ -202,7 +202,7 @@ plot_richness_by_variables <- function(physeq) {
       theme_bw() +
       theme(panel.grid = element_line(color = "grey", size = 0.5), 
             plot.title = element_text(hjust = 0.5, size = 16, color = "black"),
-            axis.text.x = element_text(angle = 90)) +
+            axis.text.x = element_text(angle = 90))
     ylab(label = "Índice alfa diversidad")
   }
   
@@ -240,50 +240,54 @@ kw_by_variables <- function(physeq) {
   #USO: Realizar un test Kruskal-Wallis para la diversidad alfa de un objeto phyloseq
       #en función de las variables
 #Test estadístico dunn posterior a Kruskall-Wallis
-dunn_by_variables <- function(physeq) {
-  df_alpha <- estimate_richness(physeq, measures = c("Shannon", "Simpson")) %>%
-    cbind(sample_data(physeq))
+dunn_by_variables <- function(physeq, measures = NULL, method = "bonferroni") {
+  # Measures
+  if (is.null(measures)) {
+    measures <- c("Shannon", "Simpson")
+  }
+  
+  # Prepare dataset
+  df_alpha <- phyloseq::estimate_richness(physeq, measures = measures)
+  metadata <- data.frame(phyloseq::sample_data(physeq))
+  df_div <- cbind(df_alpha, metadata)
   
   results <- list()
   
-  for (variable in sample_variables(physeq)) {
-    # Saltar variables con < 3 niveles únicos
-    if (length(unique(df_alpha[[variable]])) < 3) next
+  # Loop over each metadata variable
+  for (variable in colnames(metadata)) {
+    # Skip if variable is numeric
+    if (is.numeric(df_div[[variable]])) next
     
-    # Convertir la variable a factor para evitar errores
-    df_alpha[[variable]] <- as.factor(df_alpha[[variable]])
+    # If not numeric, make sure it's a factor
+    df_div[[variable]] <- as.factor(df_div[[variable]])
     
-    for (index in c("Shannon", "Simpson")) {
-      formula <- as.formula(paste(index, "~", variable))
+    # Skip if factor has less than 2 levels
+    if (nlevels(df_div[[variable]]) < 2) next
+    
+    for (index in measures) {
+      formula <- stats::as.formula(paste(index, "~", variable))
       
-      # Manejar errores con tryCatch
-      dunn_res <- tryCatch({
-        dunnTest(formula, data = df_alpha, method = "bh")
-      }, error = function(e) {
-        message(paste("Error con variable:", variable, "y índice:", index))
-        return(NULL)
-      })
+      # Execute Dunn test
+      dunn_res <- FSA::dunnTest(formula, data = df_div, method = method)
       
-      if (is.null(dunn_res)) next
+      # Tidy results
+      df_dunn <- dunn_res$res
+      df_dunn$Variable <- variable
+      df_dunn$Index <- index
+      colnames(df_dunn) <- c("Comparison", "Z", "P_uncorrected", "P_adjusted", "Variable", "Index")
       
-      dunn_df <- dunn_res$res %>%
-        mutate(
-          Variable = variable,
-          Index = index
-        ) %>%
-        rename(
-          Comparison = Comparison,
-          Z = Z,
-          P_uncorrected = P.unadj,
-          P_adjusted = P.adj
-        ) %>%
-        select(Variable, Index, Comparison, Z, P_uncorrected, P_adjusted)
-      
-      results[[paste(variable, index, sep = "_")]] <- dunn_df
+      # Save on a list format
+      results[[paste(variable, index, sep = "_")]] <- df_dunn
     }
   }
   
-  bind_rows(results)
+  # Merge results)
+  if (length(results) == 0) {
+    warning("No se encontró ninguna variable categórica válida para ejecutar DunnTest.")
+    return(NULL)
+  }
+  
+  dplyr::bind_rows(results)
 }
   #USO: Realizar un test post hoc Dunn para la diversidad alfa de un objeto phyloseq
       #en función de las variables tras aplicar "kw_by_variables"
@@ -327,24 +331,32 @@ plot_jaccard_richness_by_variables <- function(physeq){
   #USO: Obtener una lista de gráficos de diversidad beta de un objeto phyloseq en
       #función de las variables para su visualización con plotwatcher()             
 #Creador de gráfico Deseq2 para el análisis diferencial de abundancias en función de variables
-create_MAplot_from_phy <- function(physeq, condition_var, title = NULL) {
+create_MAplot_from_phy <- function(physeq, condition_var, title = NULL, contrast = NULL) {
   library(DESeq2)
   library(phyloseq)
   library(ggplot2)
   library(ggrepel)
-  # Asegurarse que la variable existe en el metadata
+  # Asegurarse que la variable existe en los metadatos
   if (!(condition_var %in% colnames(sample_data(physeq)))) {
-    stop(paste("La variable", condition_var, "no está en los metadatos del phyloseq"))
+    stop(paste("La variable", condition_var, "no está en los metadatos del objeto phyloseq"))
   }
-  # Guardar la variable título si necesario
+  # Crear título automático si no se proporciona
   if (is.null(title)) {
-    title = condition_var
+    title <- condition_var
   }
-  # Crear objeto DESeq2 desde physeq usando la variable de diseño
+  # Crear objeto DESeq2
   dds <- phyloseq_to_deseq2(physeq, as.formula(paste("~", condition_var)))
   dds <- DESeq(dds)
-  res <- results(dds)
-  
+  # Obtener resultados (contraste específico si se da)
+  if (!is.null(contrast)) {
+    # Validación: el argumento debe ser un vector de longitud 3
+    if (length(contrast) != 3) {
+      stop("El argumento 'contrast' debe tener la forma c('variable', 'grupo_comparado', 'grupo_referencia')")
+    }
+    res <- results(dds, contrast = contrast)
+  } else {
+    res <- results(dds)
+  }
   # Preparar dataframe para MA plot
   ma_data <- data.frame(
     baseMean = res$baseMean,
@@ -352,17 +364,15 @@ create_MAplot_from_phy <- function(physeq, condition_var, title = NULL) {
     padj = res$padj,
     OTU = rownames(res)
   )
-  
-  # Extraer taxonomía para poder etiquetarla
+  # Extraer taxonomía
   tax <- as.data.frame(tax_table(physeq))
   ma_data$Genus <- tax[match(ma_data$OTU, rownames(tax)), "Genus"]
-  
-  # Filtrar para etiquetas (padj < 0.05) y valores inválidos
-  label_data <- subset(ma_data, padj < 0.05)
+  # Etiquetas para puntos significativos
+  label_data <- subset(ma_data, padj < 0.05 & is.finite(log2FoldChange))
   label_data$Label <- ifelse(is.na(label_data$Genus), label_data$OTU, label_data$Genus)
+  # Filtrar datos válidos
   ma_data <- subset(ma_data, is.finite(baseMean) & is.finite(log2FoldChange) & !is.na(padj))
-  
-  # Crear plot
+  # Crear MA plot
   plot <- ggplot(ma_data, aes(x = log10(baseMean + 1), y = log2FoldChange)) +
     geom_point(aes(color = padj < 0.05), size = 3, alpha = 0.7) +
     scale_color_manual(values = c("FALSE" = "gray70", "TRUE" = "red")) +
@@ -373,21 +383,22 @@ create_MAplot_from_phy <- function(physeq, condition_var, title = NULL) {
     theme(
       plot.title = element_text(hjust = 0, size = 17, face = "bold"), 
       axis.text.x = element_text(angle = 70, vjust = 1, hjust = 0.5, size = 9),
+      axis.title.x.bottom = element_text(face = "bold"),
       axis.text.y = element_text(size = 8), 
       axis.title.y.left = element_text(size = 13, face = "bold"),
       legend.title = element_text(size = 13, face = "bold"),
       legend.text = element_text(size = 14), 
       panel.grid.major.x = element_blank(),
       panel.grid.minor = element_blank(), 
-      panel.grid.major.y = element_line(color = "grey", size = 0.5)  # Añade la cuadrícula para el eje Y
+      panel.grid.major.y = element_line(color = "grey", size = 0.5)
     ) +
     labs(
       title = title,
       x = "Log10(Abundancia promedio + 1)",
-      y = paste("Cambio en Log2 (por", condition_var, ")"),
+      y = paste("Transformación en Log2 (por", condition_var, ")"),
       color = "Significativo (padj < 0.05)"
     )
   return(plot)
 }
-  #USO: Obtener un gráfico de abundancia diferencial de un objeto phyloseq proporcionado
-      #en función de la variable dependiente (categórica) proporcionada
+
+
