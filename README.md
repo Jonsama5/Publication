@@ -30,7 +30,7 @@ The data analysis pipeline was implemented in R (version 4.4.2) using the follow
 - **phyloseq (v1.5)** — handling microbiome data objects and analyses  
 - **microbiome (v1.28)** — microbiome-specific metrics and visualizations  
 - **vegan (v2.6.1)** — ecological and diversity statistics  
-- **DESeq2 (v1.46)** — differential abundance analysis  
+- **lefser (v1.16.2)** — differential abundance analysis  
 - **mvabund (v4.2.1)** — multivariate abundance modeling  
 - **gt (v0.11.1)** — elegant tabular summaries  
 - **ggplot2 (v3.5.2)** — graphics and visualization  
